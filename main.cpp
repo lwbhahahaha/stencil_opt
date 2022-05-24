@@ -76,8 +76,8 @@ step_naive(float* temp, float* temp2, float* conduct, int width, int height) {
 	return;
 }
 
-void 
-step_naive_edited(float* temp, float* temp2, float* conduct, int width, int height) {
+void step_naive_edited(float* temp, float* temp2, float* conduct, int width, int height) 
+{
 	for ( int i = 0; i < height; i++ ) {
 		temp[idx(0,i,width)] = temp[idx(1,i,width)];
 		temp[idx(height-1, i,width)] = temp[idx(height-2,i,width)];
@@ -122,6 +122,7 @@ step_naive_edited(float* temp, float* temp2, float* conduct, int width, int heig
 		}
 	}
 	
+	
 	memset( temp2, 0 ,sizeof( temp2));
 	transpose_block_SSE4x4(transpose_temp2, temp2, height, width);
 	transpose_block_SSE4x4(transpose_temp, temp, height, width);
@@ -133,10 +134,11 @@ step_naive_edited(float* temp, float* temp2, float* conduct, int width, int heig
 
 extern void step_optimized(float* temp, float* temp2, float* conduct, int width, int height, int threads, int substeps);
 
-void step(float* temp, float* temp2, float* conduct, int width, int height, int threads, int substeps, bool naive) {
+void step(float* temp, float* temp2, float* conduct, int width, int height, int threads, int substeps, bool naive) 
+{
 	if ( naive ) {
 		for ( int i = 0; i <substeps; i++ ) {
-			step_naive_edited(temp, temp2, conduct, width, height);
+			step_naive(temp, temp2, conduct, width, height);
 			if ( i < substeps - 1) {
 				float* t = temp;
 				temp = temp2;
@@ -148,8 +150,7 @@ void step(float* temp, float* temp2, float* conduct, int width, int height, int 
 
 
 
-int
-main (int argc, char** argv) {
+int main (int argc, char** argv) {
 	printf( "usage: ./%s [steps] [threads] [initial state file] [naive?]\n", argv[0] );
 	if ( SUBSTEP%2 ) {
 		printf( "ERROR: SUBSTEP should be power of 2!\n" );
@@ -213,7 +214,7 @@ main (int argc, char** argv) {
 	while (ii < steps) {
 		step(temp, temp2, conduct, width, height, threads, SUBSTEP, isnaive);
 		// step(temp, temp2, conduct, width, height, threads, 1, isnaive);
-		// break;
+		break;
 		ii += SUBSTEP;
 		printf( "\t Step %8d\n", ii );
 	}

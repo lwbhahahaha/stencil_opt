@@ -13,18 +13,63 @@
 #include <thread>
 #include <tchar.h>
 #include <strsafe.h>
-#define BUF_SIZE 255
+#include <pthread.h>
+#include <list>
+#include <unistd.h>
+#include <sched.h>
+#include <sys/time.h>
+
+#include <immintrin.h>
+#include <mutex>
 
 using namespace std;
 
-int blockSize;
-int MAX_THREADS ;
-int width;
-int height;
-inline int idx(int i, int j) {
-	return i*width+j;
-}
+typedef struct {
+	bool fence;
+	int i;
+	int j;
+} worker;
 
+bool workerInitialized = false;
+pthread_t* worker_threads;
+int threadCt = -1;
+int timeLayerSkip = -1;
+int worker_width;
+int worker_height;
+
+typedef struct {
+	list<worker> list;
+	int left;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	pthread_barrier_t barrier;
+
+	int heightThreadLimit;
+	int widthThreadLimit;
+	float* input;
+	float* output;
+	float* conduct;
+	int stepsGoal;
+	int blockSize;
+	int barrierCt;
+
+} ThreadStatus;
+ThreadStatus worker_status;
+
+typedef struct {
+	int tid;
+}ThreadArgs;
+ThreadArgs* worker_thread_args;
+
+#define idx(i,j) (i*worker_width+j)
+#define idx_3d(i,j,time) (time*worker_width*worker_height+i*worker_width+j)
+#define min(x,y) (((x)>(y))?(y):(x))
+#define max(x,y) (((x)>(y))?(x):(y))
+#define abs(x) (((x)>0)?(x):(-(x)))
+
+
+
+/* 
 inline void transpose4x4_SSE(float *A, float *B, const int lda, const int ldb) {
     __m128 row1 = _mm_load_ps(&A[0*lda]);
     __m128 row2 = _mm_load_ps(&A[1*lda]);
@@ -51,52 +96,52 @@ inline void transpose_block_SSE4x4(float *A, float *B, const int h, const int w)
         }
     }
 }
+*/
 
-// struct thread_data
-// {
-//  int x;
-//  int y;
-//  float* temp;
-// float* temp2; 
-// float* conduct;
-//  int width;
-// int height; 
-//  thread_data(int i, int j, float* t1, float* t2, float* c, int w, int h)
-//  {
-// 	x=i;
-// 	y=j;
-// 	temp=t1;
-// 	temp2=t2;
-// 	conduct=c;
-// 	width=w;
-// 	height=h;
-//  }
-// };
-
-// DWORD WINAPI thread_func(LPVOID lpParameter)
-// {
-//  thread_data *td = (thread_data*)lpParameter;
-//  block_cache_optimized(td->x, td->y, td->temp, td->temp2, td->conduct, td->width, td->height);
-//  return 0;
-// }
-void process_block_avx(float* temp, float* temp2, float* conduct, int i, int j)
+inline void process_8(float* temp, float* temp2, float* conduct, int i, int j)
 {
+	//deal with (i,j) -> (i,j+7)
 	__builtin_prefetch(temp2+idx(i,j), 1, 3);
-	//__builtin_prefetch(temp+idx(i,j+1), 0, 2);
-	//__builtin_prefetch(conduct+idx(i,j+1), 0, 1);
 
 	__m256 k = _mm256_set1_ps(0.2);
+
 	__m256 currTemp = _mm256_loadu_ps(temp+idx(i,j));
+
 	__m256 leftTemp = _mm256_loadu_ps(temp+idx(i,j-1));
 	__m256 rightTemp = _mm256_loadu_ps(temp+idx(i,j+1));
 	__m256 leftCond = _mm256_loadu_ps(conduct+idx(i,j-1));
 	__m256 rightCond = _mm256_loadu_ps(conduct+idx(i,j+1));
 	__m256 leftRslt = _mm256_mul_ps(_mm256_sub_ps(leftTemp,currTemp), leftCond);
 	__m256 rightRslt = _mm256_mul_ps(_mm256_sub_ps(rightTemp,currTemp), rightCond);
-	__m256 currRslt = _mm256_add_ps(leftRslt,rightRslt);
-	__m256 finalRslt = _mm256_add_ps(_mm256_fmadd_ps(currRslt,k,currTemp),_mm256_loadu_ps(temp2+idx(i,j)));
+
+	__m256 upTemp = _mm256_loadu_ps(temp+idx(i-1,j));
+	__m256 downTemp = _mm256_loadu_ps(temp+idx(i+1,j));
+	__m256 upCond = _mm256_loadu_ps(conduct+idx(i-1,j));
+	__m256 downCond = _mm256_loadu_ps(conduct+idx(i+1,j));
+	__m256 upRslt = _mm256_mul_ps(_mm256_sub_ps(upTemp,currTemp), upCond);
+	__m256 downRslt = _mm256_mul_ps(_mm256_sub_ps(downTemp,currTemp), downCond);
+
+	__m256 currRslt = _mm256_add_ps(_mm256_add_ps(leftRslt,rightRslt),_mm256_add_ps(upRslt,downRslt));
+	__m256 finalRslt = _mm256_fmadd_ps(currRslt,k,currTemp);
 	_mm256_storeu_ps(temp2+idx(i,j), finalRslt);
 }
+
+inline void process_1(float* temp, float* temp2, float* conduct, int i, int j)
+{
+	//deal with (i,j) only
+	temp2[idx(i,j)] = temp[idx(i,j)] +
+				((temp[idx(i-1,j)] 
+					- temp[idx(i,j)]) *conduct[idx(i-1,j)]
+					+ (temp[idx(i+1,j)] 
+					- temp[idx(i,j)]) *conduct[idx(i+1,j)]
+					+ (temp[idx(i,j-1)]
+					- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+					+ (temp[idx(i,j+1)] 
+					- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+				)*0.2;
+}
+
+/*
 void horiProcess_avx(float* temp, float* temp2, float* conduct, int threads, int substeps)
 {
 	// cout<<"\tfirst line's first blocks"<<endl;
@@ -378,508 +423,352 @@ void horiProcess_again(float* temp, float* temp2, float* conduct, int threads, i
 		}
 	}
 }
-
-void horiProcess(float* temp, float* temp2, float* conduct, int threads, int substeps)
-{
+// void horiProcess(float* temp, float* temp2, float* conduct, int threads, int substeps)
+// {
 	
-		// cout<<"first line's first blocks"<<endl;
-	//first line
-		//first block of first line
-			//upper left corner
-	temp[idx(0,0)] = temp[idx(0,1)];
-	for (int i=1;i<blockSize;i++)
-	{
-		//first col
-		temp[idx(i,0)] = temp[idx(i,1)];
+// 		// cout<<"first line's first blocks"<<endl;
+// 	//first line
+// 		//first block of first line
+// 			//upper left corner
+// 	temp[idx(0,0)] = temp[idx(0,1)];
+// 	for (int i=1;i<blockSize;i++)
+// 	{
+// 		//first col
+// 		temp[idx(i,0)] = temp[idx(i,1)];
 
-		for (int j=1;j<blockSize;j++)
-		{
-			//b0 other rows
-			temp2[idx(i,j)] = temp[idx(i,j)] +
-			(
-                        (temp[idx(i,j-1)]
-						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 		for (int j=1;j<blockSize;j++)
+// 		{
+// 			//b0 other rows
+// 			temp2[idx(i,j)] = temp[idx(i,j)] +
+// 			(
+//                         (temp[idx(i,j-1)]
+// 						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
 						
-						+ (temp[idx(i,j+1)] 
-						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-			)*0.2;
-		}
-	}
-	// cout<<"first line's last blocks"<<endl;
-		//last block of first line
-			//upper right corner
-	temp[idx(0,width-1)] = temp[idx(0,width-2)];
-	for (int i=1;i<blockSize;i++)
-	{
-		//last col
-		temp[idx(i,width-1)] = temp[idx(i,width-2)];
+// 						+ (temp[idx(i,j+1)] 
+// 						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 			)*0.2;
+// 		}
+// 	}
+// 	// cout<<"first line's last blocks"<<endl;
+// 		//last block of first line
+// 			//upper right corner
+// 	temp[idx(0,width-1)] = temp[idx(0,width-2)];
+// 	for (int i=1;i<blockSize;i++)
+// 	{
+// 		//last col
+// 		temp[idx(i,width-1)] = temp[idx(i,width-2)];
 
-		for (int j=width-blockSize;j<width-1;j++)
-		{
-			//bm other rows
-			temp2[idx(i,j)] = temp[idx(i,j)] +
-			(
-                        (temp[idx(i,j-1)]
-						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
-						+ (temp[idx(i,j+1)] 
-						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-			)*0.2;
-		}
-	}
-		//middle blocks of first line
-		// cout<<"first line's middle blocks"<<endl;
-	for (int blockJ=blockSize; blockJ<width-blockSize;blockJ+=blockSize)
-	{
-		for (int i=1;i<blockSize;i++)
-		{
-			for (int j=blockJ;j<blockJ+blockSize;j++)
-			{
-				temp2[idx(i,j)] = temp[idx(i,j)] +
-				(
-							(temp[idx(i,j-1)]
-							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
-							+ (temp[idx(i,j+1)] 
-							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-				)*0.2;
-			}
-		}
-	}
-	// cout<<"last line's fisrt blocks"<<endl;
-	//last line
-		//first block of last line
-			//left down corner
-	temp[idx(height-1,0)] = temp[idx(height-1,1)];
+// 		for (int j=width-blockSize;j<width-1;j++)
+// 		{
+// 			//bm other rows
+// 			temp2[idx(i,j)] = temp[idx(i,j)] +
+// 			(
+//                         (temp[idx(i,j-1)]
+// 						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 						+ (temp[idx(i,j+1)] 
+// 						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 			)*0.2;
+// 		}
+// 	}
+// 		//middle blocks of first line
+// 		// cout<<"first line's middle blocks"<<endl;
+// 	for (int blockJ=blockSize; blockJ<width-blockSize;blockJ+=blockSize)
+// 	{
+// 		for (int i=1;i<blockSize;i++)
+// 		{
+// 			for (int j=blockJ;j<blockJ+blockSize;j++)
+// 			{
+// 				temp2[idx(i,j)] = temp[idx(i,j)] +
+// 				(
+// 							(temp[idx(i,j-1)]
+// 							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 							+ (temp[idx(i,j+1)] 
+// 							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 				)*0.2;
+// 			}
+// 		}
+// 	}
+// 	// cout<<"last line's fisrt blocks"<<endl;
+// 	//last line
+// 		//first block of last line
+// 			//left down corner
+// 	temp[idx(height-1,0)] = temp[idx(height-1,1)];
 
-	for (int i=height-blockSize;i<height-1;i++)
-	{
-		//first col
-		temp[idx(i,0)] = temp[idx(i,1)];
+// 	for (int i=height-blockSize;i<height-1;i++)
+// 	{
+// 		//first col
+// 		temp[idx(i,0)] = temp[idx(i,1)];
 
-		for (int j=1;j<blockSize;j++)
-		{
-			temp2[idx(i,j)] = temp[idx(i,j)] +
-			(
-                        (temp[idx(i,j-1)]
-						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 		for (int j=1;j<blockSize;j++)
+// 		{
+// 			temp2[idx(i,j)] = temp[idx(i,j)] +
+// 			(
+//                         (temp[idx(i,j-1)]
+// 						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
 						
-						+ (temp[idx(i,j+1)] 
-						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-			)*0.2;
-		}
-	}
-	// cout<<"last line's last blocks"<<endl;
-		//last block of last line
-			//right down corner
-	temp[idx(height-1,width-1)] = temp[idx(height-1,width-2)];
+// 						+ (temp[idx(i,j+1)] 
+// 						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 			)*0.2;
+// 		}
+// 	}
+// 	// cout<<"last line's last blocks"<<endl;
+// 		//last block of last line
+// 			//right down corner
+// 	temp[idx(height-1,width-1)] = temp[idx(height-1,width-2)];
 
-	for (int i=height-blockSize;i<height-1;i++)
-	{
-		//last col
-		temp[idx(i,width-1)] = temp[idx(i,width-2)];
+// 	for (int i=height-blockSize;i<height-1;i++)
+// 	{
+// 		//last col
+// 		temp[idx(i,width-1)] = temp[idx(i,width-2)];
 
-		for (int j=width-blockSize;j<width-1;j++)
-		{
-			temp2[idx(i,j)] = temp[idx(i,j)] +
-			(
-                        (temp[idx(i,j-1)]
-						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
-						+ (temp[idx(i,j+1)] 
-						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-			)*0.2;
-		}
-	}
-	// cout<<"last line's middle blocks"<<endl;
-		//middle blocks of last line
-	for (int blockJ=blockSize; blockJ<width-blockSize;blockJ+=blockSize)
-	{
-		for (int i=height-blockSize;i<height-1;i++)
-		{
-			for (int j=blockJ;j<blockJ+blockSize;j++)
-			{
-				temp2[idx(i,j)] = temp[idx(i,j)] +
-				(
-							(temp[idx(i,j-1)]
-							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
-							+ (temp[idx(i,j+1)] 
-							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-				)*0.2;
-			}
-		}
-	}
-	//middle lines
-	for (int blockI=blockSize; blockI<=height-2*blockSize; blockI+=blockSize)
-	{
-		// cout<<"first block of this middle rows"<<endl;
-		//first block of last line
-		for (int i=blockI;i<blockI+blockSize;i++)
-		{
-			//first col
-			temp[idx(i,0)] = temp[idx(i,1)];
+// 		for (int j=width-blockSize;j<width-1;j++)
+// 		{
+// 			temp2[idx(i,j)] = temp[idx(i,j)] +
+// 			(
+//                         (temp[idx(i,j-1)]
+// 						- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 						+ (temp[idx(i,j+1)] 
+// 						- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 			)*0.2;
+// 		}
+// 	}
+// 	// cout<<"last line's middle blocks"<<endl;
+// 		//middle blocks of last line
+// 	for (int blockJ=blockSize; blockJ<width-blockSize;blockJ+=blockSize)
+// 	{
+// 		for (int i=height-blockSize;i<height-1;i++)
+// 		{
+// 			for (int j=blockJ;j<blockJ+blockSize;j++)
+// 			{
+// 				temp2[idx(i,j)] = temp[idx(i,j)] +
+// 				(
+// 							(temp[idx(i,j-1)]
+// 							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 							+ (temp[idx(i,j+1)] 
+// 							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 				)*0.2;
+// 			}
+// 		}
+// 	}
+// 	//middle lines
+// 	for (int blockI=blockSize; blockI<=height-2*blockSize; blockI+=blockSize)
+// 	{
+// 		// cout<<"first block of this middle rows"<<endl;
+// 		//first block of last line
+// 		for (int i=blockI;i<blockI+blockSize;i++)
+// 		{
+// 			//first col
+// 			temp[idx(i,0)] = temp[idx(i,1)];
 
-			for (int j=1;j<blockSize;j++)
-			{
-				temp2[idx(i,j)] = temp[idx(i,j)] +
-				(
-							(temp[idx(i,j-1)]
-							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 			for (int j=1;j<blockSize;j++)
+// 			{
+// 				temp2[idx(i,j)] = temp[idx(i,j)] +
+// 				(
+// 							(temp[idx(i,j-1)]
+// 							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
 							
-							+ (temp[idx(i,j+1)] 
-							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-				)*0.2;
-			}
-		}
-		//cout<<"last block of this middle rows"<<endl;
-		//last block of last line
-		for (int i=blockI;i<blockI+blockSize;i++)
-		{
-			//last col
-			temp[idx(i,width-1)] = temp[idx(i,width-2)];
+// 							+ (temp[idx(i,j+1)] 
+// 							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 				)*0.2;
+// 			}
+// 		}
+// 		//cout<<"last block of this middle rows"<<endl;
+// 		//last block of last line
+// 		for (int i=blockI;i<blockI+blockSize;i++)
+// 		{
+// 			//last col
+// 			temp[idx(i,width-1)] = temp[idx(i,width-2)];
 
-			for (int j=width-blockSize;j<width-1;j++)
-			{
-				temp2[idx(i,j)] = temp[idx(i,j)] +
-				(
-							(temp[idx(i,j-1)]
-							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 			for (int j=width-blockSize;j<width-1;j++)
+// 			{
+// 				temp2[idx(i,j)] = temp[idx(i,j)] +
+// 				(
+// 							(temp[idx(i,j-1)]
+// 							- temp[idx(i,j)]) *conduct[idx(i,j-1)]
 							
-							+ (temp[idx(i,j+1)] 
-							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-				)*0.2;
-			}
-		}
-		//cout<<"middle block of this middle rows"<<endl;
-		//middle blocks of last line
+// 							+ (temp[idx(i,j+1)] 
+// 							- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 				)*0.2;
+// 			}
+// 		}
+// 		//cout<<"middle block of this middle rows"<<endl;
+// 		//middle blocks of last line
 		
-		for (int blockJ=blockSize; blockJ<=width-2*blockSize;blockJ+=blockSize)
-		{
-			for (int i=blockI;i<blockI+blockSize;i++)
-			{
-				for (int j=blockJ;j<blockJ+blockSize;j++)
-				{
-					temp2[idx(i,j)] = temp[idx(i,j)] +
-					(
-								(temp[idx(i,j-1)]
-								- temp[idx(i,j)]) *conduct[idx(i,j-1)]
+// 		for (int blockJ=blockSize; blockJ<=width-2*blockSize;blockJ+=blockSize)
+// 		{
+// 			for (int i=blockI;i<blockI+blockSize;i++)
+// 			{
+// 				for (int j=blockJ;j<blockJ+blockSize;j++)
+// 				{
+// 					temp2[idx(i,j)] = temp[idx(i,j)] +
+// 					(
+// 								(temp[idx(i,j-1)]
+// 								- temp[idx(i,j)]) *conduct[idx(i,j-1)]
 								
-								+ (temp[idx(i,j+1)] 
-								- temp[idx(i,j)]) *conduct[idx(i,j+1)]
-					)*0.2;
-				}
-			}
-		}
-	}
-}
-bool isChanged(float* temp, float* temp2, int width, int height) {
-	for (int i = 0; i < height;i++)
-	{
-		for (int j=0;j<width;j++)
-		{
-			if (temp[idx(i,j)] != temp2[idx(i,j)])
-				return true;
-		}
-	}
-	return false;
+// 								+ (temp[idx(i,j+1)] 
+// 								- temp[idx(i,j)]) *conduct[idx(i,j+1)]
+// 					)*0.2;
+// 				}
+// 			}
+// 		}
+// 	}
+// }
+// bool isChanged(float* temp, float* temp2, int width, int height) {
+// 	for (int i = 0; i < height;i++)
+// 	{
+// 		for (int j=0;j<width;j++)
+// 		{
+// 			if (temp[idx(i,j)] != temp2[idx(i,j)])
+// 				return true;
+// 		}
+// 	}
+// 	return false;
 
-}
+// }
+*/
 
-
-void printMatrix(float* curr, int w, int h)
+void printMatrix(float* curr, int iStart, int jStart, int w, int h)
 {
-	for (int i=0;i<h;i++)
+	for (int i=iStart;i<iStart+h;i++)
 	{
-		for(int j=0;j<w;j++)
-			cout<<curr[i*w+j]<<"\t";
+		for(int j=jStart;j<jStart+w;j++)
+			cout<<curr[idx(i,j)]<<"\t";
 		cout<<endl;
 	}
 }
 
+// may/23 new content:
+
+void threadFunc_firstRowCol(int ii, int jj, bool iAtLimit, bool jAtLimit)
+{
+	// (ii,jj) is the upper left coordinate of block
+	int iStart=(iAtLimit?1:0)+ii;
+	int jStart=(jAtLimit?1:0)+jj;
+	int stepsGoal=worker_status.stepsGoal;
+	int blockSize=worker_status.blockSize;
+	float* output=worker_status.output + timeLayerSkip *(stepsGoal-1);
+	//first step
+	for ( int i = iStart; i < ii+blockSize; i++ ) 
+	{
+		//process 8 values at each time to optimize with avx.
+		for ( int j = jStart; j < jj+blockSize; j+=8 ) 
+			process_8(worker_status.input, output , worker_status.conduct,i,j);
+	}
+	//shift to up or left.
+	for (int time=1;time<stepsGoal;time++)
+	{
+		//set pointers for input and output
+		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
+		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
+		iStart = (iAtLimit?1:-time)+ii;
+		jStart = (jAtLimit?1:-time)+jj;
+		int iEnd = ii + blockSize-time;
+		int jEnd = jj + blockSize-time;
+		for ( int i = iStart; i<iEnd; i++ ) 
+		{
+			int j = jStart;
+			for (;j<jEnd-7;j+=8) 
+				process_8(input, output, worker_status.conduct,i,j);
+			for (;j<jEnd;j++) 
+				process_1(input, output, worker_status.conduct,i,j);
+		}
+	}
+}
+
+void threadFunc_lastRowCol(int ii, int jj, bool iAtLimit, bool jAtLimit)
+{
+	int stepsGoal=worker_status.stepsGoal;
+	int blockSize=worker_status.blockSize;
+	//shift to up or left.
+	for (int time=1;time<stepsGoal;time++)
+	{
+		//set pointers for input and output
+		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
+		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
+		int iStart = ii - time;
+		int jStart = jj - time;
+		int iEnd = min(worker_width-1, ii + blockSize);
+		int jEnd = min(worker_height-1, jj + blockSize);
+
+		for ( int i = iStart; i<iEnd; i++ ) 
+		{
+			int j = jStart;
+			for (;j<jEnd-7;j+=8) 
+				process_8(input, output, worker_status.conduct,i,j);
+			for (;j<jEnd;j++) 
+				process_1(input, output, worker_status.conduct,i,j);
+		}
+	}
+}
+
+
+
+void trapezoid_blocking(float* temp, float* temp2, float* conduct, int w, int h, int threads, int substeps)
+{
+	//assume blockSize can be divided by 8
+	if (blockSize % 8 != 0)
+		cout <<"warning: blockSize = "<<blockSize<<" cannot be divided by 8.";
+	//my step should = (bS-7)
+	// float* temp3d = (float*)_aligned_malloc(sizeof(float)*width*height*blockSize, 64);
+	// No dependencies for corner
+
+	// Edges only depend on corner
+	// Next line only depends on edges 
+	// All done with trapezoids
+	// Fill out the rest 
+}
+
+
+
+
+
 void step_optimized(float* temp, float* temp2, float* conduct, int w, int h, int threads, int substeps)
 {
-	// blockSize=4;
-	// w=8;
-	// h=8;
-	// float* before = (float*)_aligned_malloc(sizeof(float)*w*h, 64);
-	// float* after = (float*)_aligned_malloc(sizeof(float)*w*h, 64);
-	// for (int i=0;i<h;i++)
-	// {
-	// 	for(int j=0;j<w;j++)
-	// 		before[i*w+j]=i*w+j;
-	// }
-	// cout<<"before:"<<endl;
-	// printMatrix(before,w,h);
-	// transpose_block_SSE4x4(before, after, w, h);
-	// cout<<"transposed:,w,h);
-	// transpose_block_SSE4x4(after, before, w, h);
-	// cout<<"transposed"<<endl;
-	// printMatrix(before,w,h);
-	// return;
-
-
 	width=w;
 	height=h;
-	blockSize=min(256,max(height,width)/threads/2);
+	// blockSize=min(256,max(height,width)/threads/2);
 
+	blockSize=16;
+	for (int i=1;i<16;i++)
+	{
+		for(int j=1;j<16;j++)
+			temp[idx(i,j)]=500;
+	}
+	cout<<"before:"<<endl;
+	printMatrix(temp,0,0,16,16);
+	for (int i=0; i<16;i++)
+	{
+		//deal with 8 values each time to optimize with avx
+		for (int j=0; j<16;j+=8)
+			process_block_trapezoid_avx(temp, temp2, conduct, i, j);
+	}
+	cout<<"after:"<<endl;
+	printMatrix(temp2,0,0,16,16);
 
+	/*
 	float* transpose_conduct = (float*)_aligned_malloc(sizeof(float)*width*height, 64);
 	transpose_block_SSE4x4(conduct, transpose_conduct, height, width);
 	for ( int i = 0; i <substeps; i+=2) 
 	{
-			// cout<<"\t\ti = "<<i<<endl;
 			horiProcess(temp, temp2, conduct, threads, substeps);
-			// horiProcess_avx(temp, temp2, conduct, threads, substeps);
-			// cout <<"1 hori success"<<endl;
-
+			
 			float* transpose_temp = (float*)_aligned_malloc(sizeof(float)*width*height, 64);
 			float* transpose_temp2 = (float*)_aligned_malloc(sizeof(float)*width*height, 64);
 			transpose_block_SSE4x4(temp, transpose_temp, height, width);
 			transpose_block_SSE4x4(temp2, transpose_temp2, height, width);
-			// cout <<"1 transpose success"<<endl;
+			
 			horiProcess_again(transpose_temp, transpose_temp2, transpose_conduct, threads, substeps);
-			// horiProcess_avx(transpose_temp, transpose_temp2, transpose_conduct, threads, substeps);
-			// cout <<"2 hori success"<<endl;
-		//next step
+
 			horiProcess(transpose_temp2, transpose_temp, transpose_conduct, threads, substeps);
-			// horiProcess_avx(transpose_temp, transpose_temp2, transpose_conduct, threads, substeps);
-			// cout <<"3 hori success"<<endl;
+
 			transpose_block_SSE4x4(transpose_temp2, temp2, height, width);
 			transpose_block_SSE4x4(transpose_temp, temp, height, width);
-			// cout <<"2 hotransposeri success"<<endl;
 
 			
 			horiProcess_again(temp2, temp, conduct, threads, substeps);
-			// horiProcess_avx(temp, temp2, conduct, threads, substeps);
-			// cout <<"4 hori success"<<endl;
 			
 			_aligned_free(transpose_temp);
 			_aligned_free(transpose_temp2);
-			// cout<<"transpose freed"<<endl;
-
-			// _aligned_free(temp2);
-			// float* temp2 = (float*)_aligned_malloc(sizeof(float)*width*height*substeps,32);
-			// cout<<"temp2 freed"<<endl;
-	}
-	float* t = temp;
-	temp = temp2;
-	temp2 = t;
+	
+	*/
 }
-
-// void step_optimized(float* temp, float* temp2, float* conduct, int width, int height, int threads, int substeps)
-// {
-// 	MAX_THREADS=threads;
-// 	blockSize=min(256,max(height,width)/threads/2);
-// 	int ct=0;
-// 	thread myThread[threads] = {};
-// 	for ( int s = 0; s <substeps; s++ )
-// 	{
-// 		for ( int i = 0; i < height; i+=blockSize)
-// 		{
-// 			for ( int j = 0; j < width; j+=blockSize)
-// 			{
-// 				myThread[ct%threads] = thread(block_cache_optimized, i, j, temp, temp2, conduct, width, height);
-// 				// myThread[ct%threads] = thread(testing, s, ct%threads, temp, temp2, conduct, width, height);
-// 				ct++;
-// 				if (ct==threads)
-// 				{
-// 					for (int i=threads-1;i>=0;i--)
-// 						myThread[i].join();
-// 					ct=0;
-// 					thread myThread[threads] = {};
-// 				}
-// 			}
-// 		}
-// 		if ( s < substeps - 1) 
-// 		{
-// 			float* t = temp;
-// 			temp = temp2;
-// 			temp2 = t;
-// 		}
-// 	}
-// }
-
-// void step_optimized(float* temp, float* temp2, float* conduct, int width, int height, int threads, int substeps)
-// {
-// 	blockSize=min(256,max(height,width)/threads/2);
-// 	int ct=0;
-// 	thread myThread[threads] = {};
-// 	for ( int s = 0; s <substeps; s++ )
-// 	{
-// 		for ( int i = 0; i < height; i+=blockSize)
-// 		{
-// 			for ( int j = 0; j < width; j+=blockSize)
-// 			{
-// 				myThread[ct%threads] = thread(block_cache_optimized, i, j, temp, temp2, conduct, width, height);
-// 				// myThread[ct%threads] = thread(testing, s, ct%threads, temp, temp2, conduct, width, height);
-// 				ct++;
-// 				if (ct==threads)
-// 				{
-// 					for (int i=threads-1;i>=0;i--)
-// 						myThread[i].join();
-// 					ct=0;
-// 					thread myThread[threads] = {};
-// 				}
-// 			}
-// 		}
-// 		if ( s < substeps - 1) 
-// 		{
-// 			float* t = temp;
-// 			temp = temp2;
-// 			temp2 = t;
-// 		}
-// 	}
-// }
-
-
-
-// DWORD WINAPI MyThreadFunction( LPVOID lpParam );
-// void ErrorHandler(LPTSTR lpszFunction);
-
-// // Sample custom data structure for threads to use.
-// // This is passed by void pointer so it can be any data type
-// // that can be passed using a single void pointer (LPVOID).
-// typedef struct MyData {
-//     int x;
-//  	int y;
-//  	float* temp;
-// 	float* temp2; 
-// 	float* conduct;
-//  	int width;
-// 	int height; 
-// } MYDATA, *PMYDATA;
-
-
-// int _tmain()
-// {
-//     PMYDATA pDataArray[MAX_THREADS];
-//     DWORD   dwThreadIdArray[MAX_THREADS];
-//     HANDLE  hThreadArray[MAX_THREADS]; 
-
-//     // Create MAX_THREADS worker threads.
-
-//     for( int i=0; i<MAX_THREADS; i++ )
-//     {
-//         // Allocate memory for thread data.
-
-//         pDataArray[i] = (PMYDATA) HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-//                 sizeof(MYDATA));
-
-//         if( pDataArray[i] == NULL )
-//         {
-//            // If the array allocation fails, the system is out of memory
-//            // so there is no point in trying to print an error message.
-//            // Just terminate execution.
-//             ExitProcess(2);
-//         }
-
-//         // Generate unique data for each thread to work with.
-
-//         pDataArray[i]->val1 = i;
-//         pDataArray[i]->val2 = i+100;
-
-//         // Create the thread to begin execution on its own.
-
-//         hThreadArray[i] = CreateThread( 
-//             NULL,                   // default security attributes
-//             0,                      // use default stack size  
-//             MyThreadFunction,       // thread function name
-//             pDataArray[i],          // argument to thread function 
-//             0,                      // use default creation flags 
-//             &dwThreadIdArray[i]);   // returns the thread identifier 
-
-
-//         // Check the return value for success.
-//         // If CreateThread fails, terminate execution. 
-//         // This will automatically clean up threads and memory. 
-
-//         if (hThreadArray[i] == NULL) 
-//         {
-//            ErrorHandler(TEXT("CreateThread"));
-//            ExitProcess(3);
-//         }
-//     } // End of main thread creation loop.
-
-//     // Wait until all threads have terminated.
-
-//     WaitForMultipleObjects(MAX_THREADS, hThreadArray, TRUE, INFINITE);
-
-//     // Close all thread handles and free memory allocations.
-
-//     for(int i=0; i<MAX_THREADS; i++)
-//     {
-//         CloseHandle(hThreadArray[i]);
-//         if(pDataArray[i] != NULL)
-//         {
-//             HeapFree(GetProcessHeap(), 0, pDataArray[i]);
-//             pDataArray[i] = NULL;    // Ensure address is not reused.
-//         }
-//     }
-
-//     return 0;
-// }
-
-
-// DWORD WINAPI MyThreadFunction( LPVOID lpParam ) 
-// { 
-//     HANDLE hStdout;
-//     PMYDATA pDataArray;
-
-//     TCHAR msgBuf[BUF_SIZE];
-//     size_t cchStringSize;
-//     DWORD dwChars;
-
-//     // Make sure there is a console to receive output results. 
-
-//     hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
-//     if( hStdout == INVALID_HANDLE_VALUE )
-//         return 1;
-
-//     // Cast the parameter to the correct data type.
-//     // The pointer is known to be valid because 
-//     // it was checked for NULL before the thread was created.
- 
-//     pDataArray = (PMYDATA)lpParam;
-
-//     // Print the parameter values using thread-safe functions.
-
-//     StringCchPrintf(msgBuf, BUF_SIZE, TEXT("Parameters = %d, %d\n"), 
-//         pDataArray->val1, pDataArray->val2); 
-//     StringCchLength(msgBuf, BUF_SIZE, &cchStringSize);
-//     WriteConsole(hStdout, msgBuf, (DWORD)cchStringSize, &dwChars, NULL);
-
-//     return 0; 
-// } 
-
-
-
-// void ErrorHandler(LPTSTR lpszFunction) 
-// { 
-//     // Retrieve the system error message for the last-error code.
-
-//     LPVOID lpMsgBuf;
-//     LPVOID lpDisplayBuf;
-//     DWORD dw = GetLastError(); 
-
-//     FormatMessage(
-//         FORMAT_MESSAGE_ALLOCATE_BUFFER | 
-//         FORMAT_MESSAGE_FROM_SYSTEM |
-//         FORMAT_MESSAGE_IGNORE_INSERTS,
-//         NULL,
-//         dw,
-//         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-//         (LPTSTR) &lpMsgBuf,
-//         0, NULL );
-
-//     // Display the error message.
-
-//     lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT, 
-//         (lstrlen((LPCTSTR) lpMsgBuf) + lstrlen((LPCTSTR) lpszFunction) + 40) * sizeof(TCHAR)); 
-//     StringCchPrintf((LPTSTR)lpDisplayBuf, 
-//         LocalSize(lpDisplayBuf) / sizeof(TCHAR),
-//         TEXT("%s failed with error %d: %s"), 
-//         lpszFunction, dw, lpMsgBuf); 
-//     MessageBox(NULL, (LPCTSTR) lpDisplayBuf, TEXT("Error"), MB_OK); 
-
-//     // Free error-handling buffer allocations.
-
-//     LocalFree(lpMsgBuf);
-//     LocalFree(lpDisplayBuf);
-// }

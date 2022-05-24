@@ -5,11 +5,14 @@ make.exe all --print-data-base --no-builtin-variables --no-builtin-rules --quest
 # License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
 # This is free software: you are free to change and redistribute it.
 # There is NO WARRANTY, to the extent permitted by law.
+ 
 
-# Make data base, printed on Sun May 22 18:42:41 2022
+# Make data base, printed on Mon May 23 21:06:10 2022
 
 # Variables
 
+# environment
+FPS_BROWSER_APP_PROFILE_STRING = Internet Explorer
 # environment
 SYSTEMDRIVE = C:
 # environment
@@ -19,7 +22,7 @@ USERPROFILE = C:\Users\wenbl13
 # environment
 LOCALAPPDATA = C:\Users\wenbl13\AppData\Local
 # environment
-VSCODE_IPC_HOOK_EXTHOST = \\.\pipe\vscode-ipc-c190e855-d06a-4719-8255-a8d369a208b6-sock
+VSCODE_IPC_HOOK_EXTHOST = \\.\pipe\vscode-ipc-8c2a6c57-51da-485b-a27b-0116ae4f670a-sock
 # environment
 VSCODE_CWD = C:\Users\wenbl13\AppData\Local\Programs\Microsoft VS Code
 # environment
@@ -35,7 +38,9 @@ USERDNSDOMAIN = HS.UCI.EDU
 # automatic
 @D = $(patsubst %/,%,$(patsubst %\,%,$(dir $@)))
 # environment
-CHROME_CRASHPAD_PIPE_NAME = \\.\pipe\crashpad_15008_KBYPKYTJTVSWEDYP
+CHROME_CRASHPAD_PIPE_NAME = \\.\pipe\crashpad_22436_PQZKZDYMIHITJLOK
+# environment
+FPS_BROWSER_USER_PROFILE_STRING = Default
 # environment
 VSCODE_HANDLES_UNCAUGHT_ERRORS = true
 # default
@@ -55,7 +60,7 @@ LANG = C
 # default
 .LOADED := 
 # environment
-TMP = C:\Users\wenbl13\AppData\Local\Temp\1
+TMP = C:\Users\wenbl13\AppData\Local\Temp\3
 # default
 .INCLUDE_DIRS = .
 # environment
@@ -89,7 +94,7 @@ MAKEFILE_LIST := Makefile
 # environment
 VSCODE_VERBOSE_LOGGING = true
 # environment
-VSCODE_PID = 15008
+VSCODE_PID = 22436
 # automatic
 ?D = $(patsubst %/,%,$(patsubst %\,%,$(dir $?)))
 # automatic
@@ -119,8 +124,7 @@ MAKELEVEL := 0
 # default
 MAKE = $(MAKE_COMMAND)
 # environment
-PATH = C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Windows\CCM;C:\Program Files\Dell\Dell Data Protection\Encryption\;C:\Program Files\MATLAB\R2022a\bin;C:\Users\wenbl13\AppData\Local\Programs\Python\Python310\Scripts\;C:\Us 
-ers\wenbl13\AppData\Local\Programs\Python\Python310\;C:\Users\wenbl13\AppData\Local\Programs\Python\Launcher\;C:\Users\wenbl13\AppData\Local\Microsoft\WindowsApps;C:\Users\wenbl13\AppData\Local\Programs\Microsoft VS Code\bin;C:\msys64\mingw64\bin;
+PATH = C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Windows\CCM;C:\Program Files\Dell\Dell Data Protection\Encryption\;C:\Program Files\MATLAB\R2022a\bin;C:\Users\wenbl13\AppData\Local\Programs\Python\Python310\Scripts\;C:\Users\wenbl13\AppData\Local\Programs\Python\Python310\;C:\Users\wenbl13\AppData\Local\Programs\Python\Launcher\;C:\Users\wenbl13\AppData\Local\Microsoft\WindowsApps;C:\Users\wenbl13\AppData\Local\Programs\Microsoft VS Code\bin;C:\msys64\mingw64\bin;C:\Users\wenbl13\AppData\Local\Programs\Git\cmd
 # environment
 ZES_ENABLE_SYSMAN = 1
 # environment
@@ -182,7 +186,7 @@ COMMONPROGRAMFILES(X86) = C:\Program Files (x86)\Common Files
 # environment
 ELECTRON_RUN_AS_NODE = 1
 # environment
-TEMP = C:\Users\wenbl13\AppData\Local\Temp\1
+TEMP = C:\Users\wenbl13\AppData\Local\Temp\3
 # environment
 VSCODE_IPC_HOOK = \\.\pipe\eb2c9383d8549da652cc4b8f27b25088-1.67.2-main-sock
 # default
@@ -202,7 +206,7 @@ PROCESSOR_REVISION = a701
 # environment
 PROCESSOR_IDENTIFIER = Intel64 Family 6 Model 167 Stepping 1, GenuineIntel
 # variable set hash-table stats:
-# Load=95/1024=9%, Rehash=0, Collisions=8/125=6%
+# Load=97/1024=9%, Rehash=0, Collisions=9/127=7%
 
 # Pattern-specific Variable Values
 
@@ -210,9 +214,9 @@ PROCESSOR_IDENTIFIER = Intel64 Family 6 Model 167 Stepping 1, GenuineIntel
 
 # Directories
 
-# . (key c:/Users/wenbl13/Desktop/lab1, mtime 1653268473): 15 files, no impossibilities.
+# . (key c:/Users/wenbl13/Desktop/lab1, mtime 1653365129): 17 files, no impossibilities.
 
-# 15 files, no impossibilities in 1 directories.
+# 17 files, no impossibilities in 1 directories.
 
 # Implicit Rules
 
@@ -283,12 +287,12 @@ all:
 
 # No general ('VPATH' variable) search path.
 
-# strcache buffers: 1 (0) / strings = 19 / storage = 188 B / avg = 9 B
-# current buf: size = 8174 B / used = 188 B / count = 19 / avg = 9 B
+# strcache buffers: 1 (0) / strings = 21 / storage = 214 B / avg = 10 B
+# current buf: size = 8174 B / used = 214 B / count = 21 / avg = 10 B
 
-# strcache performance: lookups = 27 / hit rate = 29%
+# strcache performance: lookups = 29 / hit rate = 27%
 # hash-table stats:
-# Load=19/8192=0%, Rehash=0, Collisions=0/27=0%
-# Finished Make data base on Sun May 22 18:42:41 2022
+# Load=21/8192=0%, Rehash=0, Collisions=0/29=0%
+# Finished Make data base on Mon May 23 21:06:10 2022
 
  

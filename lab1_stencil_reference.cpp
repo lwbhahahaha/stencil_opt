@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <sched.h>
 #include <sys/time.h>
 
 #include <immintrin.h>
@@ -326,7 +325,7 @@ void* worker_thread(void* arg_) {
 		pthread_mutex_lock(&g_status.mutex);
 		if ( g_status.list.empty() ) {
 			pthread_mutex_unlock(&g_status.mutex);
-			sched_yield();
+			pthread_yield();
 			continue;
 		}
 		WorkItem w = g_status.list.front();

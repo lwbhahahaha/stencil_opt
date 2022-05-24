@@ -2,6 +2,5 @@ make.exe --dry-run --always-make --keep-going --print-directory
 make: Entering directory 'c:/Users/wenbl13/Desktop/lab1'
 g++ -o obj/stencil main.cpp stencil.cpp -Wall -pedantic -lpthread -O3 -mavx -mavx2 -mfma -g -fopenmp 
 gcc -o obj/datagen datagen.cpp -Wall -pedantic
- 
 make: Leaving directory 'c:/Users/wenbl13/Desktop/lab1'
  
