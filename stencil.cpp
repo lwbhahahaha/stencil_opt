@@ -39,7 +39,7 @@ int worker_height;
 
 typedef struct {
 	list<worker> list;
-	int left;
+	int numOfworkerAvailable;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
 	pthread_barrier_t barrier;
@@ -639,20 +639,25 @@ void printMatrix(float* curr, int iStart, int jStart, int w, int h)
 
 // may/23 new content:
 
-void threadFunc_firstRowCol(int ii, int jj, bool iAtLimit, bool jAtLimit)
+void threadFunc_cornerBlocks(int ii, int jj)
 {
-	// (ii,jj) is the upper left coordinate of block
-	int iStart=(iAtLimit?1:0)+ii;
-	int jStart=(jAtLimit?1:0)+jj;
 	int stepsGoal=worker_status.stepsGoal;
 	int blockSize=worker_status.blockSize;
-	float* output=worker_status.output + timeLayerSkip *(stepsGoal-1);
-	//first step
-	for ( int i = iStart; i < ii+blockSize; i++ ) 
+	int condition=0;
+	// (ii,jj) is the upper left coordinate of block
+	if ((ii==0 || jj==0) && (ii+jj!= worker_width-blockSize && ii+jj!= worker_height-blockSize))
 	{
-		//process 8 values at each time to optimize with avx.
-		for ( int j = jStart; j < jj+blockSize; j+=8 ) 
-			process_8(worker_status.input, output , worker_status.conduct,i,j);
+		condition=-1;
+		int iStart=(ii==0?1:0)+ii;
+		int jStart=(jj==0?1:0)+jj;
+		float* output=worker_status.output + timeLayerSkip *(stepsGoal-1);
+		//first step
+		for ( int i = iStart; i < ii+blockSize; i++ ) 
+		{
+			//process 8 values at each time to optimize with avx.
+			for ( int j = jStart; j < jj+blockSize; j+=8 ) 
+				process_8(worker_status.input, output , worker_status.conduct,i,j);
+		}
 	}
 	//shift to up or left.
 	for (int time=1;time<stepsGoal;time++)
@@ -660,10 +665,10 @@ void threadFunc_firstRowCol(int ii, int jj, bool iAtLimit, bool jAtLimit)
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		iStart = (iAtLimit?1:-time)+ii;
-		jStart = (jAtLimit?1:-time)+jj;
-		int iEnd = ii + blockSize-time;
-		int jEnd = jj + blockSize-time;
+		int iStart = (ii==0?1:-time)+ii;
+		int jStart = (jj==0?1:-time)+jj;
+		int iEnd = min(worker_width-1, ii + blockSize + condition*time);
+		int jEnd = min(worker_height-1, jj + blockSize + condition*time);
 		for ( int i = iStart; i<iEnd; i++ ) 
 		{
 			int j = jStart;
@@ -675,39 +680,108 @@ void threadFunc_firstRowCol(int ii, int jj, bool iAtLimit, bool jAtLimit)
 	}
 }
 
-void threadFunc_lastRowCol(int ii, int jj, bool iAtLimit, bool jAtLimit)
+inline void recursionHelper(int ii, int jj, int currStepsStart, int currNumOfSteps, int blockSize) 
 {
 	int stepsGoal=worker_status.stepsGoal;
-	int blockSize=worker_status.blockSize;
-	//shift to up or left.
-	for (int time=1;time<stepsGoal;time++)
+	float* output = worker_status.output + timeLayerSkip*(stepsGoal-1);
+	int currStepsEnd = currStepsStart+currNumOfSteps;
+	// first step
+	if ( currStepsStart == 0 ) {
+		int iEnd=ii+blockSize;
+		int jEnd=jj+worker_status.blockSize;
+		for (int i=ii;i<iEnd;i++) 
+		{
+			for ( int j = jj; j < jEnd; j += 8 ) 
+				process_8(worker_status.input, output , worker_status.conduct,i,j);
+		}
+		currStepsStart = 1;
+	}
+	// next steps
+	for (int time = currStepsStart; time < currStepsEnd; time++ ) 
 	{
-		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
 		int iStart = ii - time;
 		int jStart = jj - time;
-		int iEnd = min(worker_width-1, ii + blockSize);
-		int jEnd = min(worker_height-1, jj + blockSize);
-
-		for ( int i = iStart; i<iEnd; i++ ) 
+		int iEnd=iStart+blockSize;
+		int jEnd=jStart+worker_status.blockSize;
+		for (int i=iStart;i<iEnd;i++) 
 		{
-			int j = jStart;
-			for (;j<jEnd-7;j+=8) 
-				process_8(input, output, worker_status.conduct,i,j);
-			for (;j<jEnd;j++) 
-				process_1(input, output, worker_status.conduct,i,j);
+			for (int j=jStart;j<jEnd;j+=8)
+				process_8(input, output , worker_status.conduct,i,j);
 		}
 	}
 }
 
+void threadFunc_middleBlocks(int ii, int jj, int currStepsStart, int currNumOfSteps, int blockSize) 
+{
+	//keep dividing blocks until bS<=16 and steps<=16.
+	if ( blockSize > 16 || currNumOfSteps > 16 ) {
+		if ( blockSize > currNumOfSteps ) {
+			int nextBlockSize = blockSize/2;
+			threadFunc_middleBlocks(ii, jj, currStepsStart, currNumOfSteps, nextBlockSize);
+			threadFunc_middleBlocks(ii, jj+nextBlockSize, currStepsStart, currNumOfSteps, nextBlockSize);
+		} else {
+			int nextNumOfSteps = currNumOfSteps/2;
+			threadFunc_middleBlocks(ii, jj, currStepsStart, nextNumOfSteps, blockSize);
+			threadFunc_middleBlocks(ii, jj, currStepsStart+nextNumOfSteps, nextNumOfSteps, blockSize);
+		} 
+		return;
+	}
+	recursionHelper(ii, jj, currStepsStart, currNumOfSteps, blockSize);
+}
 
+void* worker_thread(void* arg_) 
+{
+	ThreadArgs* arg = (ThreadArgs*)arg_;
+	int tid = arg->tid;
+	int proccessCt = 0;
+	while (true) 
+	{
+		pthread_mutex_lock(&worker_status.mutex);
+		if ( worker_status.list.empty() ) 
+		{
+			pthread_mutex_unlock(&worker_status.mutex);
+			pthread_yield();
+			continue;
+		}
+		worker worker = worker_status.list.front();
+		if ( !worker.fence ) 
+		{
+			worker_status.list.pop_front();
+			worker_status.numOfworkerAvailable--;
+		} else {
+			worker_status.barrierCt++;
+			if ( worker_status.barrierCt >= threadCt ) 
+			{
+				worker_status.barrierCt = 0;
+				worker_status.list.pop_front();
+				if ( worker_status.numOfworkerAvailable == 0 ) 
+					pthread_cond_signal(&worker_status.cond);
+			}
+		}
+		pthread_mutex_unlock(&worker_status.mutex);
+
+		if ( worker.fence ) 
+		{
+			pthread_barrier_wait(&worker_status.barrier);
+			continue;
+		} 
+		proccessCt++;
+		if (worker.i == 0 || worker.i == worker_status.heightThreadLimit || worker.j == 0 || worker.j == worker_status.widthThreadLimit)
+			threadFunc_cornerBlocks(worker.i*worker_status.blockSize,worker.j*worker_status.blockSize);
+		else 
+			threadFunc_middleBlocks(worker.i*worker_status.blockSize,worker.j*worker_status.blockSize, 0, worker_status.stepsGoal, worker_status.blockSize);
+		
+	}
+	return NULL;
+}
 
 void trapezoid_blocking(float* temp, float* temp2, float* conduct, int w, int h, int threads, int substeps)
 {
 	//assume blockSize can be divided by 8
-	if (blockSize % 8 != 0)
-		cout <<"warning: blockSize = "<<blockSize<<" cannot be divided by 8.";
+	if (worker_status.blockSize % 8 != 0)
+		cout <<"warning: blockSize = "<<worker_status.blockSize<<" cannot be divided by 8.";
 	//my step should = (bS-7)
 	// float* temp3d = (float*)_aligned_malloc(sizeof(float)*width*height*blockSize, 64);
 	// No dependencies for corner

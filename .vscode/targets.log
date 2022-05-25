@@ -5,14 +5,11 @@ make.exe all --print-data-base --no-builtin-variables --no-builtin-rules --quest
 # License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
 # This is free software: you are free to change and redistribute it.
 # There is NO WARRANTY, to the extent permitted by law.
- 
 
-# Make data base, printed on Mon May 23 21:06:10 2022
+# Make data base, printed on Tue May 24 19:35:38 2022
 
 # Variables
 
-# environment
-FPS_BROWSER_APP_PROFILE_STRING = Internet Explorer
 # environment
 SYSTEMDRIVE = C:
 # environment
@@ -22,7 +19,7 @@ USERPROFILE = C:\Users\wenbl13
 # environment
 LOCALAPPDATA = C:\Users\wenbl13\AppData\Local
 # environment
-VSCODE_IPC_HOOK_EXTHOST = \\.\pipe\vscode-ipc-8c2a6c57-51da-485b-a27b-0116ae4f670a-sock
+VSCODE_IPC_HOOK_EXTHOST = \\.\pipe\vscode-ipc-6a23f2ac-154c-49ea-9824-11d0cf13245c-sock
 # environment
 VSCODE_CWD = C:\Users\wenbl13\AppData\Local\Programs\Microsoft VS Code
 # environment
@@ -38,9 +35,7 @@ USERDNSDOMAIN = HS.UCI.EDU
 # automatic
 @D = $(patsubst %/,%,$(patsubst %\,%,$(dir $@)))
 # environment
-CHROME_CRASHPAD_PIPE_NAME = \\.\pipe\crashpad_22436_PQZKZDYMIHITJLOK
-# environment
-FPS_BROWSER_USER_PROFILE_STRING = Default
+CHROME_CRASHPAD_PIPE_NAME = \\.\pipe\crashpad_13464_BSGWXMINOWIDTAHQ
 # environment
 VSCODE_HANDLES_UNCAUGHT_ERRORS = true
 # default
@@ -60,7 +55,7 @@ LANG = C
 # default
 .LOADED := 
 # environment
-TMP = C:\Users\wenbl13\AppData\Local\Temp\3
+TMP = C:\Users\wenbl13\AppData\Local\Temp\4
 # default
 .INCLUDE_DIRS = .
 # environment
@@ -71,7 +66,8 @@ MAKEFLAGS = pqrR
 ONEDRIVE = C:\Users\wenbl13\OneDrive
 # makefile
 CURDIR := c:/Users/wenbl13/Desktop/lab1
-# environment
+# 
+ environment
 VSCODE_PIPE_LOGGING = true
 # environment
 APPLICATION_INSIGHTS_NO_DIAGNOSTIC_CHANNEL = 1
@@ -94,7 +90,7 @@ MAKEFILE_LIST := Makefile
 # environment
 VSCODE_VERBOSE_LOGGING = true
 # environment
-VSCODE_PID = 22436
+VSCODE_PID = 13464
 # automatic
 ?D = $(patsubst %/,%,$(patsubst %\,%,$(dir $?)))
 # automatic
@@ -186,7 +182,7 @@ COMMONPROGRAMFILES(X86) = C:\Program Files (x86)\Common Files
 # environment
 ELECTRON_RUN_AS_NODE = 1
 # environment
-TEMP = C:\Users\wenbl13\AppData\Local\Temp\3
+TEMP = C:\Users\wenbl13\AppData\Local\Temp\4
 # environment
 VSCODE_IPC_HOOK = \\.\pipe\eb2c9383d8549da652cc4b8f27b25088-1.67.2-main-sock
 # default
@@ -206,7 +202,7 @@ PROCESSOR_REVISION = a701
 # environment
 PROCESSOR_IDENTIFIER = Intel64 Family 6 Model 167 Stepping 1, GenuineIntel
 # variable set hash-table stats:
-# Load=97/1024=9%, Rehash=0, Collisions=9/127=7%
+# Load=95/1024=9%, Rehash=0, Collisions=8/125=6%
 
 # Pattern-specific Variable Values
 
@@ -293,6 +289,6 @@ all:
 # strcache performance: lookups = 29 / hit rate = 27%
 # hash-table stats:
 # Load=21/8192=0%, Rehash=0, Collisions=0/29=0%
-# Finished Make data base on Mon May 23 21:06:10 2022
+# Finished Make data base on Tue May 24 19:35:38 2022
 
  
