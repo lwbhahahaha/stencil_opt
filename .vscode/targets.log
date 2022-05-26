@@ -6,7 +6,7 @@ make.exe all --print-data-base --no-builtin-variables --no-builtin-rules --quest
 # This is free software: you are free to change and redistribute it.
 # There is NO WARRANTY, to the extent permitted by law.
 
-# Make data base, printed on Tue May 24 19:35:38 2022
+# Make data base, printed on Wed May 25 16:36:36 2022
 
 # Variables
 
@@ -19,7 +19,7 @@ USERPROFILE = C:\Users\wenbl13
 # environment
 LOCALAPPDATA = C:\Users\wenbl13\AppData\Local
 # environment
-VSCODE_IPC_HOOK_EXTHOST = \\.\pipe\vscode-ipc-6a23f2ac-154c-49ea-9824-11d0cf13245c-sock
+VSCODE_IPC_HOOK_EXTHOST = \\.\pipe\vscode-ipc-393ea56d-1ab6-49e8-b679-d8279bf6a959-sock
 # environment
 VSCODE_CWD = C:\Users\wenbl13\AppData\Local\Programs\Microsoft VS Code
 # environment
@@ -35,7 +35,7 @@ USERDNSDOMAIN = HS.UCI.EDU
 # automatic
 @D = $(patsubst %/,%,$(patsubst %\,%,$(dir $@)))
 # environment
-CHROME_CRASHPAD_PIPE_NAME = \\.\pipe\crashpad_13464_BSGWXMINOWIDTAHQ
+CHROME_CRASHPAD_PIPE_NAME = \\.\pipe\crashpad_4556_QGEQRUNPHZSQPLGJ
 # environment
 VSCODE_HANDLES_UNCAUGHT_ERRORS = true
 # default
@@ -55,7 +55,7 @@ LANG = C
 # default
 .LOADED := 
 # environment
-TMP = C:\Users\wenbl13\AppData\Local\Temp\4
+TMP = C:\Users\wenbl13\AppData\Local\Temp\5
 # default
 .INCLUDE_DIRS = .
 # environment
@@ -66,8 +66,7 @@ MAKEFLAGS = pqrR
 ONEDRIVE = C:\Users\wenbl13\OneDrive
 # makefile
 CURDIR := c:/Users/wenbl13/Desktop/lab1
-# 
- environment
+# environment
 VSCODE_PIPE_LOGGING = true
 # environment
 APPLICATION_INSIGHTS_NO_DIAGNOSTIC_CHANNEL = 1
@@ -88,9 +87,10 @@ MAKEFILE_LIST := Makefile
 # automatic
 @F = $(notdir $@)
 # environment
-VSCODE_VERBOSE_LOGGING = true
+VSCODE_VE 
+RBOSE_LOGGING = true
 # environment
-VSCODE_PID = 13464
+VSCODE_PID = 4556
 # automatic
 ?D = $(patsubst %/,%,$(patsubst %\,%,$(dir $?)))
 # automatic
@@ -132,7 +132,7 @@ MAKEFILES :=
 # environment
 PROMPT = $P$G
 # environment
-LOGONSERVER = \\IRVDS3002
+LOGONSERVER = \\IRVDS3001
 # environment
 VSCODE_LOG_NATIVE = false
 # environment
@@ -182,7 +182,7 @@ COMMONPROGRAMFILES(X86) = C:\Program Files (x86)\Common Files
 # environment
 ELECTRON_RUN_AS_NODE = 1
 # environment
-TEMP = C:\Users\wenbl13\AppData\Local\Temp\4
+TEMP = C:\Users\wenbl13\AppData\Local\Temp\5
 # environment
 VSCODE_IPC_HOOK = \\.\pipe\eb2c9383d8549da652cc4b8f27b25088-1.67.2-main-sock
 # default
@@ -289,6 +289,6 @@ all:
 # strcache performance: lookups = 29 / hit rate = 27%
 # hash-table stats:
 # Load=21/8192=0%, Rehash=0, Collisions=0/29=0%
-# Finished Make data base on Tue May 24 19:35:38 2022
+# Finished Make data base on Wed May 25 16:36:36 2022
 
  
