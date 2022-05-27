@@ -21,10 +21,11 @@
 #include <immintrin.h>
 #include <mutex>
 
+#define _GNU_SOURCE
+
 using namespace std;
 
 typedef struct {
-	bool isLastJob;
 	int jobType; 
 	// 1->4: corners;	
 	// 5->8:edges; 
@@ -68,8 +69,8 @@ typedef struct {
 }ThreadArgs;
 ThreadArgs* worker_thread_args;
 
-#define idx(i,j) (i*worker_width+j)
-#define idx_3d(i,j,time) (time*worker_width*worker_height+i*worker_width+j)
+#define idx(i,j) ((i)*worker_width+(j))
+#define idx_3d(i,j,t) ((t)*worker_width*worker_height+(i)*worker_width+(j))
 #define min(x,y) (((x)>(y))?(y):(x))
 #define max(x,y) (((x)>(y))?(x):(y))
 #define abs(x) (((x)>0)?(x):(-(x)))
@@ -105,10 +106,42 @@ inline void transpose_block_SSE4x4(float *A, float *B, const int h, const int w)
 }
 */
 
+void printMatrix(float* curr, int iStart, int jStart, int w, int h)
+{
+	cout<<"\t\t";
+	for (int j=jStart;j<jStart+w;j++)
+		cout<<j<<"\t";
+	cout<<endl<<endl;
+	for (int i=iStart;i<iStart+h;i++)
+	{
+		cout<<i<<"\t\t";
+		for(int j=jStart;j<jStart+w;j++)
+			cout<<(float)((int)(curr[idx(i,j)]*100))/100<<"\t";
+		cout<<endl;
+	}
+	cout<<endl;
+}
+
+bool isEquals(float* temp, float* temp2, int width, int height) {
+	for (int i = 0; i < height;i++)
+	{
+		for (int j=0;j<width;j++)
+		{
+			if (temp[idx(i,j)] != temp2[idx(i,j)])
+				return false;
+		}
+	}
+	return true;
+}
+
 inline void process_8(float* temp, float* temp2, float* conduct, int i, int j)
 {
+	// cout<<"process_8"<<endl;
+	// cout<<isEquals(worker_status.input,temp,worker_width,worker_height)<<endl;
 	//deal with (i,j) -> (i,j+7)
-	__builtin_prefetch(temp2+idx(i,j), 1, 3);
+	__builtin_prefetch(temp+idx(i,j), 1, 3);
+	__builtin_prefetch(temp2+idx(i,j+1), 1, 3);
+	__builtin_prefetch(conduct+idx(i,j+1), 0, 1);
 
 	__m256 k = _mm256_set1_ps(0.2);
 
@@ -120,40 +153,41 @@ inline void process_8(float* temp, float* temp2, float* conduct, int i, int j)
 	__m256 rightCond = _mm256_loadu_ps(conduct+idx(i,j+1));
 	__m256 leftRslt = _mm256_mul_ps(_mm256_sub_ps(leftTemp,currTemp), leftCond);
 	__m256 rightRslt = _mm256_mul_ps(_mm256_sub_ps(rightTemp,currTemp), rightCond);
-	for (int jj=j;jj<j+9;jj++)
-		cout<<i-1<<","<<jj<<"="<<temp[idx(i-1,jj)]<<"\t";
-	cout<<endl;
+	// cout<<"avx:\t";
+	// for (int jj=j;jj<j+9;jj++)
+	// 	cout<<i<<","<<jj<<"="<<temp[idx(i-1,jj)]<<"\t";
+	// cout<<endl;
 	__m256 upTemp = _mm256_loadu_ps(temp+idx(i-1,j));
-	if (i==2022 && j==1)
-		cout<<"here 1"<<endl;
+	// if (i==2022 && j==1)
+	// 	cout<<"process_8 checkpoint 1"<<endl;
 	__m256 downTemp = _mm256_loadu_ps(temp+idx(i+1,j));	
-	if (i==2022 && j==1)
-		cout<<"here 2"<<endl;
+	// if (i==2022 && j==1)
+	// 	cout<<"process_8 checkpoint 2"<<endl;
 	__m256 upCond = _mm256_loadu_ps(conduct+idx(i-1,j));	
-	if (i==2022 && j==1)
-		cout<<"here 3"<<endl;
+	// if (i==2022 && j==1)
+	// 	cout<<"process_8 checkpoint 3"<<endl;
 	__m256 downCond = _mm256_loadu_ps(conduct+idx(i+1,j));	
-	if (i==2022 && j==1)
-		cout<<"here 4"<<endl;
+	// if (i==2022 && j==1)
+	// 	cout<<"process_8 checkpoint 4"<<endl;
 	__m256 upRslt = _mm256_mul_ps(_mm256_sub_ps(upTemp,currTemp), upCond);
-	if (i==2022 && j==1)
-		cout<<"here 5"<<endl;
+	// if (i==2022 && j==1)
+	// 	cout<<"process_8 checkpoint 5"<<endl;
 	__m256 downRslt = _mm256_mul_ps(_mm256_sub_ps(downTemp,currTemp), downCond);
-	if (i==2022 && j==1)
-		cout<<"here 6"<<endl;
+	// if (i==2022 && j==1)
+	// 	cout<<"process_8 checkpoint 6"<<endl;
 
 	__m256 currRslt = _mm256_add_ps(_mm256_add_ps(leftRslt,rightRslt),_mm256_add_ps(upRslt,downRslt));
 	__m256 finalRslt = _mm256_fmadd_ps(currRslt,k,currTemp);
 	_mm256_storeu_ps(temp2+idx(i,j), finalRslt);
-	if (i==2022 && j==1)
-		cout<<"here 7"<<endl;
+	// if (i==2022 && j==1)
+		// cout<<"process_8 checkpoint 7"<<endl;
 }
 
 inline void process_1(float* temp, float* temp2, float* conduct, int i, int j)
 {
 	//deal with (i,j) only
 	temp2[idx(i,j)] = temp[idx(i,j)] +
-				((temp[idx(i-1,j)] 
+					((temp[idx(i-1,j)] 
 					- temp[idx(i,j)]) *conduct[idx(i-1,j)]
 					+ (temp[idx(i+1,j)] 
 					- temp[idx(i,j)]) *conduct[idx(i+1,j)]
@@ -636,86 +670,81 @@ void horiProcess_again(float* temp, float* temp2, float* conduct, int threads, i
 // 		}
 // 	}
 // }
-// bool isChanged(float* temp, float* temp2, int width, int height) {
-// 	for (int i = 0; i < height;i++)
-// 	{
-// 		for (int j=0;j<width;j++)
-// 		{
-// 			if (temp[idx(i,j)] != temp2[idx(i,j)])
-// 				return true;
-// 		}
-// 	}
-// 	return false;
-
 // }
 */
 
-// void printMatrix(float* curr, int iStart, int jStart, int w, int h)
-// {
-// 	for (int i=iStart;i<iStart+h;i++)
-// 	{
-// 		for(int j=jStart;j<jStart+w;j++)
-// 			cout<<curr[idx(i,j)]<<"\t";
-// 		cout<<endl;
-// 	}
-// }
 
 // may/23 new content:
 
 inline void leftDownCorner()
 {
-	cout<<"here 1"<<endl;
+	//double checked on 5/26, no edges
 	//ii = h-bs
 	//jj = 0 
 	int stepsGoal=worker_status.stepsGoal;
 	int blockSize=worker_status.blockSize;
 	float* output=worker_status.output + timeLayerSkip *(stepsGoal-1);
+	
 	//first step
-	for ( int i = worker_height-1; i > worker_height-blockSize-1; i-- ) 
+	// 	//edges
+	// for ( int i = worker_height-2-blockSize; i <= worker_height-2; i++ )
+	// 	worker_status.input[idx(i,0)] = worker_status.input[idx(i,1)];
+	// for ( int j = 0; j < 1+blockSize; j++ )
+	// 	worker_status.input[idx(worker_height-1,j)] = worker_status.input[idx(worker_height-2,j)];
+		//rest
+	for ( int i = worker_height-1-blockSize; i <= worker_height-2; i++ )
 	{
 		for ( int j = 1; j < 1+blockSize; j+=8 ) 
 		{
-			for (int jjj=j;jjj<j+9;jjj++)
-				cout<<"here "<<i-1<<","<<jjj<<"="<<worker_status.input[idx(i-1,jjj)]<<"\t";
-			cout<<endl;
+			// cout<<"naive:\t";
+			// for (int jjj=j;jjj<j+8;jjj++)
+			// 	cout<<i-1<<" * "<<worker_width<<" + "<<j<<" = "<<idx(i-1,jjj)<<endl;
+			// cout<<endl;
 			process_8(worker_status.input, output , worker_status.conduct,i,j);
 		}
 	}
-	cout<<"here 2"<<endl;
+	// cout<<"leftDownCorner checkpoint 2"<<endl;
 	for (int time=1;time<stepsGoal;time++)
 	{
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		int iEnd = worker_height-blockSize-time-1;
+		int iEnd = worker_height-blockSize+time-1;
 		int jEnd = 1+blockSize-time;
-		for ( int i = worker_height-1; i>iEnd; i-- ) 
+		// 	//edges
+		// for ( int i = worker_height-1; i>iEnd; i-- )
+		// 	worker_status.input[idx(i,0)] = worker_status.input[idx(i,1)];
+		// for ( int j = 0; j < jEnd; j++ )
+		// 	worker_status.input[idx(worker_height-1,j)] = worker_status.input[idx(worker_height-2,j)];
+			//rest
+		for ( int i = worker_height -2; i>=iEnd; i-- ) 
 		{
 			int j=1;
 			for (;j<jEnd-7;j+=8) 
 			{
-				cout<<"time= "<<time<<"\tproc 8: "<<i<<"/"<<worker_height<<"\t"<<j<<"/"<<worker_width<<endl;
+				// cout<<"time= "<<time<<"\tproc 8: "<<i<<"/"<<worker_height<<"\t"<<j<<"/"<<worker_width<<endl;
 				process_8(input, output, worker_status.conduct,i,j);
 			}
 			for (;j<jEnd;j++) 
 			{
-				cout<<"time= "<<time<<"\tproc 1: "<<i<<"/"<<worker_height<<"\t"<<j<<"/"<<worker_width<<endl;
+				// cout<<"time= "<<time<<"\tproc 1: "<<i<<"/"<<worker_height<<"\t"<<j<<"/"<<worker_width<<endl;
 				process_1(input, output, worker_status.conduct,i,j);
 			}
 		}
 	}
-	cout<<"here3"<<endl;
+	// cout<<"leftDownCorner checkpoint 3"<<endl;
 }
 
 inline void rightDownCorner()
 {
+	//double checked on 5/26, no edges
 	//ii = h-bs
 	//jj = w-bs
 	int stepsGoal=worker_status.stepsGoal;
 	int blockSize=worker_status.blockSize;
 	float* output=worker_status.output + timeLayerSkip *(stepsGoal-1);
 	//first step
-	for ( int i = worker_height-1; i > worker_height-1-blockSize; i-- ) 
+	for ( int i = worker_height-1-blockSize; i <= worker_height-2; i++ )  
 	{
 		for ( int j = worker_width-1-blockSize; j <worker_width-1; j+=8 ) 
 			process_8(worker_status.input, output , worker_status.conduct,i,j);
@@ -725,9 +754,9 @@ inline void rightDownCorner()
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		int iEnd = worker_height-1-blockSize-time;
+		int iEnd = worker_height-1-blockSize+time;
 		int jEnd = worker_width-1;
-		for ( int i = worker_height-1; i>iEnd; i-- ) 
+		for ( int i = worker_height-2; i>=iEnd; i-- ) 
 		{
 			int j=worker_width-1-blockSize+time;
 			for (;j<jEnd-7;j+=8) 
@@ -740,6 +769,7 @@ inline void rightDownCorner()
 
 inline void LeftUpCorner()
 {
+	//double checked on 5/26, no edges
 	//ii = 0
 	//jj = 0
 	int stepsGoal=worker_status.stepsGoal;
@@ -782,7 +812,9 @@ inline void RightUpCorner()
 		for ( int j = worker_width-1-blockSize; j <worker_width-1; j+=8 )
 			process_8(worker_status.input, output , worker_status.conduct,i,j);
 	}
-	for (int time=0;time<stepsGoal;time++)
+	
+	// cout<<"checkpoint 1"<<endl;
+	for (int time=1;time<stepsGoal;time++)
 	{
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
@@ -802,6 +834,7 @@ inline void RightUpCorner()
 
 inline void leftEdge(int ii)
 {
+	//double checked on 5/26, no edges
 	// blockSize <= ii <= height-2*blockSize
 	// jj == 0
 	int stepsGoal=worker_status.stepsGoal;
@@ -832,6 +865,7 @@ inline void leftEdge(int ii)
 
 inline void leftEdgeResidue()
 {
+	//double checked on 5/26, no edges
 	// ii = height-blockSize
 	// jj = 0
 	int stepsGoal=worker_status.stepsGoal;
@@ -841,25 +875,15 @@ inline void leftEdgeResidue()
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		int iStart=worker_height-blockSize-time;
-		int iEnd=worker_height-blockSize+time;
-		int i=iStart;
-		for (; i<worker_height-blockSize; i++ ) 
+		int iStart=worker_height-blockSize-1-time;
+		int iEnd=worker_height-blockSize-2+time;
+		for (int i=iStart; i<=iEnd; i++ ) 
 		{
 			int j=1;
-			int jEnd=min(i-iStart + 1,blockSize-time);
-			for (;j<jEnd-7;j+=8) 
+			int jEnd=blockSize-time;
+			for (;j<=jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
-			for (;j<jEnd;j++) 
-				process_1(input, output, worker_status.conduct,i,j);
-		}
-		for (;i<iEnd; i++ ) 
-		{
-			int j=1;
-			int jEnd=min(iEnd-i,blockSize-time);
-			for (;j<jEnd-7;j+=8) 
-				process_8(input, output, worker_status.conduct,i,j);
-			for (;j<jEnd;j++) 
+			for (;j<=jEnd;j++) 
 				process_1(input, output, worker_status.conduct,i,j);
 		}
 	}
@@ -867,6 +891,7 @@ inline void leftEdgeResidue()
 
 inline void UpEdge(int jj)
 {
+	//double checked on 5/26, no edges
 	// ii == 0
 	// blockSize <= jj <= width-2*blockSize
 	int stepsGoal=worker_status.stepsGoal;
@@ -897,6 +922,7 @@ inline void UpEdge(int jj)
 
 inline void upEdgeResidue()
 {
+	//double checked on 5/26, no edges
 	// ii = 0
 	// jj = w-blockSize
 	int stepsGoal=worker_status.stepsGoal;
@@ -908,11 +934,11 @@ inline void upEdgeResidue()
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
 		for (int i=1; i<1+blockSize-time; i++ ) 
 		{
-			int j=worker_width-blockSize-time;
-			int jEnd=worker_width-blockSize+time;
-			for (;j<jEnd-7;j+=8) 
+			int j=worker_width-blockSize-1-time;
+			int jEnd=worker_width-blockSize-2+time;
+			for (;j<=jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
-			for (;j<jEnd;j++) 
+			for (;j<=jEnd;j++) 
 				process_1(input, output, worker_status.conduct,i,j);
 		}
 	}
@@ -920,13 +946,14 @@ inline void upEdgeResidue()
 
 inline void downEdge(int jj)
 {
+	//double checked on 5/26, no edges
 	// ii == height-blockSize
 	// blockSize <= jj <= width-2*blockSize
 	int stepsGoal=worker_status.stepsGoal;
 	int blockSize=worker_status.blockSize;
 	float* output=worker_status.output + timeLayerSkip *(stepsGoal-1);
 	//first step
-	for ( int i = worker_height-1; i > worker_height-1-blockSize; i-- ) 
+	for ( int i = worker_height-2; i >= worker_height-1-blockSize; i-- ) 
 	{
 		for ( int j = jj; j <jj+blockSize; j+=8 ) 
 			process_8(worker_status.input, output , worker_status.conduct,i,j);
@@ -937,7 +964,7 @@ inline void downEdge(int jj)
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
 		int jEnd = jj+blockSize-time;
-		for ( int i = worker_height-1; i > worker_height-1-blockSize+time; i-- ) 
+		for ( int i = worker_height-2; i >= worker_height-1-blockSize+time; i-- ) 
 		{
 			int j=jj-time;
 			for (;j<jEnd-7;j+=8) 
@@ -950,6 +977,7 @@ inline void downEdge(int jj)
 
 inline void downEdgeResidue()
 {
+	//double checked on 5/26, no edges
 	// ii = h
 	// jj = w
 	int stepsGoal=worker_status.stepsGoal;
@@ -959,13 +987,13 @@ inline void downEdgeResidue()
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		for (int i=worker_height-1; i>worker_height-1-blockSize+time; i-- ) 
+		for (int i=worker_height-2; i>worker_height-2-blockSize+time; i-- ) 
 		{
-			int j=worker_width-2*blockSize+time;
-			int jEnd=worker_width-time;
-			for (;j<jEnd-7;j+=8) 
+			int j=worker_width-blockSize-1-time;
+			int jEnd=worker_width-blockSize-2+time;
+			for (;j<=jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
-			for (;j<jEnd;j++) 
+			for (;j<=jEnd;j++) 
 				process_1(input, output, worker_status.conduct,i,j);
 		}
 	}
@@ -973,6 +1001,7 @@ inline void downEdgeResidue()
 
 inline void rightEdge(int ii)
 {
+	//double checked on 5/26, no edges
 	// blockSize <= ii <= height-2*blockSize
 	// jj == w-blockSize
 	int stepsGoal=worker_status.stepsGoal;
@@ -1003,6 +1032,7 @@ inline void rightEdge(int ii)
 
 inline void rightEdgeResidue()
 {
+	//double checked on 5/26, no edges
 	// ii = -1
 	// jj = -1
 	// ii = height-blockSize
@@ -1014,20 +1044,11 @@ inline void rightEdgeResidue()
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		int i=blockSize-time;
-		int iEnd=blockSize+time;
-		for (; i<blockSize; i++ ) 
+		int i=blockSize+1-time;
+		int iEnd=blockSize-1+time;
+		for (; i<=iEnd; i++ ) 
 		{
-			int j=max(worker_width-blockSize+time,worker_width-i);
-			int jEnd=worker_width-1;
-			for (;j<jEnd-7;j+=8) 
-				process_8(input, output, worker_status.conduct,i,j);
-			for (;j<jEnd;j++) 
-				process_1(input, output, worker_status.conduct,i,j);
-		}
-		for (;i<iEnd; i++ ) 
-		{
-			int j=max(worker_width-blockSize+time,worker_width-2*blockSize+i);
+			int j=worker_width-blockSize+time-1;
 			int jEnd=worker_width-1;
 			for (;j<jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
@@ -1037,19 +1058,20 @@ inline void rightEdgeResidue()
 	}
 }
 
-inline void middleBlocks(int ii, int jj, int currStepsStart, int currNumOfSteps, int blockSize) 
+inline void middleBlocks(int ii, int jj, int currStepsStart, int currStepsGoal, int currblockSize) 
 {
+	//double checked on 5/26, no edges
 	//blockSize <= ii <= height-2*blockSize
 	//blockSize <= jj <= width-2*blockSize
-	int stepsGoal=worker_status.stepsGoal;
-	float* output = worker_status.output + timeLayerSkip*(stepsGoal-1);
-	int currStepsEnd = currStepsStart+currNumOfSteps;
+	int totalStepsGoal=worker_status.stepsGoal;
+	int currStepsEnd = currStepsStart+currStepsGoal;
 	if ( currStepsStart == 0 ) {
 		// first step
-		int jEnd=jj+worker_status.blockSize;
-		for ( int i = ii; i < ii+blockSize; i++ ) 
+		int iEnd=ii+worker_status.blockSize;
+		float* output = worker_status.output + timeLayerSkip*(totalStepsGoal-1);
+		for ( int i = ii; i < iEnd; i++ ) 
 		{
-			for ( int j = jj; j <jEnd; j+=8 ) 
+			for ( int j = jj; j <jj+currblockSize; j+=8 ) 
 				process_8(worker_status.input, output , worker_status.conduct,i,j);
 		}
 		currStepsStart = 1;
@@ -1057,38 +1079,40 @@ inline void middleBlocks(int ii, int jj, int currStepsStart, int currNumOfSteps,
 	// next steps
 	for (int time = currStepsStart; time < currStepsEnd; time++ ) 
 	{
-		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
-		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
+		float* input = worker_status.output + timeLayerSkip*(totalStepsGoal-time);
+		float* output = worker_status.output + timeLayerSkip*(totalStepsGoal-time-1);
 		//shift to left and up
 		int iStart = ii - time;
 		int jStart = jj - time;
-		int iEnd=iStart+blockSize;
-		int jEnd=jStart+worker_status.blockSize;
+		int iEnd=ii+worker_status.blockSize;
+		int jEnd=jStart+currblockSize;
 		for (int i=iStart;i<iEnd;i++) 
 		{
 			for (int j=jStart;j<jEnd;j+=8)
 				process_8(input, output , worker_status.conduct,i,j);
 		}
+		
 	}
 }
 
-void middleBlocksHelper(int ii, int jj, int currStepsStart, int currNumOfSteps, int blockSize) 
-{
-	//keep dividing blocks until bS<=16 and steps<=16.
-	if ( blockSize > 16 || currNumOfSteps > 16 ) {
-		if ( blockSize > currNumOfSteps ) {
-			int nextBlockSize = blockSize/2;
-			middleBlocksHelper(ii, jj, currStepsStart, currNumOfSteps, nextBlockSize);
-			middleBlocksHelper(ii, jj+nextBlockSize, currStepsStart, currNumOfSteps, nextBlockSize);
-		} else {
-			int nextNumOfSteps = currNumOfSteps/2;
-			middleBlocksHelper(ii, jj, currStepsStart, nextNumOfSteps, blockSize);
-			middleBlocksHelper(ii, jj, currStepsStart+nextNumOfSteps, nextNumOfSteps, blockSize);
-		} 
-		return;
-	}
-	middleBlocks(ii, jj, currStepsStart, currNumOfSteps, blockSize);
-}
+// void middleBlocksHelper(int ii, int jj, int currStepsStart, int currNumOfSteps, int blockSize) 
+// {
+// 	//double checked on 5/26, no edges
+// 	//keep dividing blocks until bS<=16 and steps<=16.
+// 	if ( blockSize > 16 || currNumOfSteps > 16 ) {
+// 		if ( blockSize > currNumOfSteps ) {
+// 			int nextBlockSize = blockSize/2;
+// 			middleBlocksHelper(ii, jj, currStepsStart, currNumOfSteps, nextBlockSize);
+// 			middleBlocksHelper(ii, jj+nextBlockSize, currStepsStart, currNumOfSteps, nextBlockSize);
+// 		} else {
+// 			int nextNumOfSteps = currNumOfSteps/2;
+// 			middleBlocksHelper(ii, jj, currStepsStart, nextNumOfSteps, blockSize);
+// 			middleBlocksHelper(ii, jj, currStepsStart+nextNumOfSteps, nextNumOfSteps, blockSize);
+// 		} 
+// 		return;
+// 	}
+// 	middleBlocks(ii, jj, currStepsStart, currNumOfSteps, blockSize);
+// }
 
 inline void lastColUpsideDown(int ii)
 {
@@ -1103,10 +1127,10 @@ inline void lastColUpsideDown(int ii)
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		for (int i=ii-time; i<ii+blockSize-time; i++ ) 
+		for (int i=ii-time+1; i<ii+blockSize-time+1; i++ ) 
 		{
 			int j=jj-time;
-			int jEnd=jj+time;
+			int jEnd=jj+time-1;
 			for (;j<jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
 			for (;j<jEnd;j++) 
@@ -1117,6 +1141,7 @@ inline void lastColUpsideDown(int ii)
 
 inline void lastRowUpsideDown(int jj)
 {
+	//double checked on 5/26, no edges
 	//ii = h
 	//0 <= jj <= w-3*blockSize
 	int stepsGoal=worker_status.stepsGoal;
@@ -1128,10 +1153,10 @@ inline void lastRowUpsideDown(int jj)
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		for (int i=ii-time; i<ii+time; i++ ) 
+		for (int i=ii-time; i<ii+time-1; i++ ) 
 		{
-			int j=jj-time;
-			int jEnd=jj-time+blockSize;
+			int j=jj-time+1;
+			int jEnd=jj-time+blockSize+1;
 			for (;j<jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
 			for (;j<jEnd;j++) 
@@ -1148,15 +1173,15 @@ inline void lastSqaure()
 	int blockSize=worker_status.blockSize;
 	int ii=worker_height-blockSize;
 	int jj=worker_width-blockSize;
-	for (int time=1;time<stepsGoal;time++)
+	for (int time=2;time<stepsGoal;time++)
 	{
 		//set pointers for input and output
 		float* input = worker_status.output + timeLayerSkip*(stepsGoal-time);
 		float* output = worker_status.output + timeLayerSkip*(stepsGoal-time-1);
-		for (int i=ii-time; i<ii+time; i++ ) 
+		for (int i=ii-time+1; i<ii+time-1; i++ ) 
 		{
-			int j=jj-time;
-			int jEnd=jj+time;
+			int j=jj-time+1;
+			int jEnd=jj+time-1;
 			for (;j<jEnd-7;j+=8) 
 				process_8(input, output, worker_status.conduct,i,j);
 			for (;j<jEnd;j++) 
@@ -1265,26 +1290,35 @@ void* worker_thread(void* arg_)
 {
 	ThreadArgs* arg = (ThreadArgs*)arg_;
 	int tid = arg->tid;
-	int proccessCt = 0;
 	while (true) 
 	{
 		pthread_mutex_lock(&worker_status.mutex);
 		if ( worker_status.jobList.empty() ) 
 		{
+			// cout<<"Thread "<<tid<<" got empty job list. "<<endl;
 			pthread_mutex_unlock(&worker_status.mutex);
+			// let thread to sleep for a little bit time to let newly created thread in
+			// otherwise, at least on my computer(11900k win10), 
+			// concurrency conflicts will happen.
+			Sleep(2*threadCt+10);
+			// pthread_yield();
+			// this_thread::yield();
 			sched_yield();
+			// cout<<"Thread "<<tid<<" error code = "<<sched_yield()<<endl;
 			continue;
 		}
 		job currJob = worker_status.jobList.front();
-		cout<<"Doing job: "<<currJob.jobType<<"\t"<<currJob.i<<"\t"<<currJob.j<<endl;
-		if ( !currJob.isLastJob ) 
+		if ( currJob.jobType != -1 ) 
 		{
 			worker_status.jobList.pop_front();
+			// cout<<"Thread "<<tid<<" Doing job: "<<currJob.jobType<<endl;
 			worker_status.numOfAwaitingJobs--;
 		} 
 		else 
 		{
 			worker_status.barrierCt++;
+			// cout<<"Thread "<<tid<<" got last job. "<<endl;
+			// cout<<"Thread "<<tid<<":\t"<<worker_status.barrierCt<<"\t"<<threadCt<<endl;
 			if ( worker_status.barrierCt >= threadCt ) 
 			{
 				worker_status.barrierCt = 0;
@@ -1295,12 +1329,13 @@ void* worker_thread(void* arg_)
 		}
 		pthread_mutex_unlock(&worker_status.mutex);
 
-		if ( currJob.isLastJob ) 
+		if ( currJob.jobType == -1 ) 
 		{
+			// cout<<"Thread "<<tid<<" barrier waiting"<<endl;
+			//sched_yield();
 			pthread_barrier_wait(&worker_status.barrier);
 			continue;
 		} 
-		proccessCt++;
 		if (currJob.jobType <=8)
 		{
 			if (currJob.jobType <=4)
@@ -1367,12 +1402,9 @@ void* worker_thread(void* arg_)
 				switch(currJob.jobType) 
 				{
 					case 13:
-						middleBlocksHelper(	currJob.i*worker_status.blockSize,
-											currJob.j*worker_status.blockSize,
-											0,
+						middleBlocks(currJob.i,currJob.j,0,
 											worker_status.stepsGoal,
-											worker_status.blockSize
-											);
+											16);
 						break;
 					case 14:
 						lastRowUpsideDown(currJob.j);
@@ -1387,11 +1419,7 @@ void* worker_thread(void* arg_)
 			}
 		}
 		
-		cout<<"finished job: "<<currJob.jobType<<"\t"<<currJob.i<<"\t"<<currJob.j<<endl;
-		// if (job.i == 0 || worker.i == worker_status.heightThreadLimit || worker.j == 0 || worker.j == worker_status.widthThreadLimit)
-		// 	threadFunc_edgeBlocks(worker.i*worker_status.blockSize,worker.j*worker_status.blockSize);
-		// else 
-		// 	threadFunc_middleBlocks(worker.i*worker_status.blockSize,worker.j*worker_status.blockSize, 0, worker_status.stepsGoal, worker_status.blockSize);
+		// cout<<"Thread "<<tid<<" finished job: "<<currJob.jobType<<endl;
 	}
 	return NULL;
 }
@@ -1401,10 +1429,10 @@ void trapezoid_blocking(float* temp, float* temp2, float* conduct, int w, int h,
 	int blockSize = min(256,max(w,h)/threads/2);
 	// int blockSize = 16;
 	//assume blockSize can be divided by 8
-	if (blockSize % 8 != 0)
-		cout <<"Performance warning: blockSize = "<<blockSize<<", cannot be divided by 8. This will cause segmentFault and earily terminate."<<endl;
-	else
-		cout<<"threads = "<<threads<<", blockSize = "<<blockSize<<endl;
+	if (blockSize % 16 != 0)
+		cout <<"Performance warning: blockSize = "<<blockSize<<", cannot be divided by 16. This will cause segmentFault and earily terminate."<<endl;
+	// else
+	// 	cout<<"threads = "<<threads<<", blockSize = "<<blockSize<<endl;
 	//assume substeps > 0, meaningless o.w.
 	if (substeps & (substeps-1))
 		cout <<"Performance warning: substeps = "<<substeps<<", is not a power of 2. This will cause performance issue."<<endl;
@@ -1424,153 +1452,170 @@ void trapezoid_blocking(float* temp, float* temp2, float* conduct, int w, int h,
 		for ( int i = 0; i < threads; i++ ) {
 			worker_thread_args[i].tid = i;
 			pthread_create(&worker_threads[i], NULL, worker_thread, &worker_thread_args[i]);
-			cout<<"Thread "<<worker_thread_args[i].tid<<" spawned."<<endl;
+			// cout<<"Thread "<<worker_thread_args[i].tid<<" spawned."<<endl;
 		}
 		pthread_mutex_init(&worker_status.mutex,NULL);
 		pthread_cond_init(&worker_status.cond,NULL);
 		pthread_barrier_init(&worker_status.barrier, NULL, threads);
 		workerInitialized = true;
 	}
+	pthread_mutex_lock(&worker_status.mutex);
+
 	int hLimit = h/blockSize;
 	int wLimit= w/blockSize;
-	pthread_mutex_lock(&worker_status.mutex);
 	worker_status.heightThreadLimit = hLimit;
 	worker_status.widthThreadLimit = wLimit;
 	worker_status.input = temp;
-	cout<<"*********************************************************************************"<<endl;
-	for (int jjj=1;jjj<10;jjj++)
-		cout<<""<<2045<<","<<jjj<<"="<<worker_status.input[idx(2045,jjj)]<<"\t";
-	cout<<endl;
-	cout<<"*********************************************************************************"<<endl;
 	worker_status.conduct = conduct;
 	worker_status.output = temp2;
-	worker_status.stepsGoal = substeps;
 	worker_status.blockSize = blockSize;
 	worker_status.barrierCt = 0;
 	worker_height = h;
-	worker_width = w;
-	timeLayerSkip = w*h;
 
 	int jobType = 1;
 	int jobCt = 0;
 
+	// cout<<isEquals(worker_status.input,temp,worker_width,worker_height)<<endl;
 	//No dependencies for corner
-	for (int i=0;i<1;i++)
+	for (int i=0;i<4;i++)
 	{
 		job w;
 		w.jobType=jobType++;
-		w.isLastJob = false;
 		worker_status.jobList.push_back(w);
 		jobCt++;
 	}
-	// worker_status.numOfAwaitingJobs+=jobCt;
-	// jobCt=0;
-	// while (worker_status.numOfAwaitingJobs > 0) 
-	// 	pthread_cond_wait(&worker_status.cond, &worker_status.mutex);
-	// cout<<""<<endl;
+	worker_status.numOfAwaitingJobs+=jobCt;
+	jobCt=0;
 
-	// //Edges only depend on corner
-	// 	//up
-	// for (int jj=blockSize; jj <= w-2*blockSize;jj+=blockSize)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType;
-	// 	w.j=jj;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// jobType++;
-	// 	//down
-	// for (int jj=blockSize; jj <= w-2*blockSize;jj+=blockSize)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType;
-	// 	w.j=jj;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// jobType++;
-	// 	//left
-	// for (int ii=blockSize; ii <= h-2*blockSize;ii+=blockSize)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType;
-	// 	w.i=ii;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// jobType++;
-	// 	//right
-	// for (int ii=blockSize; ii <= h-2*blockSize;ii+=blockSize)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType;
-	// 	w.i=ii;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// jobType++;
-	// 	//4 residuals
-	// for (int i=0;i<4;i++)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType++;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// // middle blocks
-	// for (int ii=blockSize; ii <= h-2*blockSize;ii+=blockSize)
-	// {
-	// 	for (int jj=blockSize; jj <= w-2*blockSize;jj+=blockSize)
-	// 	{
-	// 		job w;
-	// 		w.jobType=jobType;
-	// 		w.i=ii;
-	// 		w.j=jj;
-	// 		w.isLastJob = false;
-	// 		worker_status.jobList.push_back(w);
-	// 		jobCt++;
-	// 	}
-	// }
-	// jobType++;
-	// // fill last row
-	// for (int jj=0; jj <= w-3*blockSize;jj+=blockSize)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType;
-	// 	w.j=jj;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// jobType++;
-	// // fill last col
-	// for (int ii=0; ii <= h-3*blockSize;ii+=blockSize)
-	// {
-	// 	job w;
-	// 	w.jobType=jobType;
-	// 	w.i=ii;
-	// 	w.isLastJob = false;
-	// 	worker_status.jobList.push_back(w);
-	// 	jobCt++;
-	// }
-	// jobType++;
-	// // fill last square
-	// job wLast;
-	// wLast.jobType=jobType;
-	// wLast.isLastJob = true;
-	// worker_status.jobList.push_back(wLast);
-	// jobCt++;
-
+	//Edges only depend on corner
+		//up
+	for (int jj=blockSize; jj <= w-2*blockSize;jj+=blockSize)
+	{
+		job w;
+		w.jobType=jobType;
+		w.j=jj;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	jobType++;
+	worker_status.numOfAwaitingJobs+=jobCt;
+	jobCt=0;
+		//down
+	for (int jj=blockSize; jj <= w-2*blockSize;jj+=blockSize)
+	{
+		job w;
+		w.jobType=jobType;
+		w.j=jj;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	jobType++;
+	worker_status.numOfAwaitingJobs+=jobCt;
+	jobCt=0;
+		//left
+	for (int ii=blockSize; ii <= h-2*blockSize;ii+=blockSize)
+	{
+		job w;
+		w.jobType=jobType;
+		w.i=ii;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	jobType++;
+	worker_status.numOfAwaitingJobs+=jobCt;
+	jobCt=0;
+		//right
+	for (int ii=h-2*blockSize; ii >= blockSize;ii-=blockSize)
+	{
+		job w;
+		w.jobType=jobType;
+		w.i=ii;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	jobType++;
+	worker_status.numOfAwaitingJobs+=jobCt;
+	jobCt=0;
+		//4 residuals
+	for (int i=0;i<4;i++)
+	{
+		job w;
+		w.jobType=jobType++;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	worker_status.numOfAwaitingJobs+=jobCt;
+	jobCt=0;
+	// middle blocks
+	for (int ii=blockSize; ii <= h-2*blockSize;ii+=blockSize)
+	{
+		for (int jj=blockSize; jj <= w-2*blockSize;jj+=16)
+		{
+			job w;
+			w.jobType=jobType;
+			w.i=ii;
+			w.j=jj;
+			worker_status.jobList.push_back(w);
+			jobCt++;
+		}
+		worker_status.numOfAwaitingJobs+=jobCt;
+		jobCt=0;
+	}
+	jobType++;
+	// fill last row
+	for (int jj=0; jj <= w-3*blockSize;jj+=blockSize)
+	{
+		job w;
+		w.jobType=jobType;
+		w.j=jj;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	jobType++;
+	// fill last col
+	for (int ii=0; ii <= h-3*blockSize;ii+=blockSize)
+	{
+		job w;
+		w.jobType=jobType;
+		w.i=ii;
+		worker_status.jobList.push_back(w);
+		jobCt++;
+	}
+	// fill last square
+	job wLast;
+	wLast.jobType=++jobType;
+	worker_status.jobList.push_back(wLast);
+	jobCt++;
+	// last job lets goooooooooooooooooooooooooooooo
+	job w_end;
+	w_end.jobType=-1;
+	worker_status.jobList.push_back(w_end);
+	
 	worker_status.numOfAwaitingJobs += jobCt;
-
+	
+	// if (!workerInitialized)
+	// {
+	// 	//First step
+	// 	threadCt = threads;
+	// 	worker_threads = (pthread_t*)malloc(sizeof(pthread_t)*threads);
+	// 	worker_thread_args = (ThreadArgs*)malloc(sizeof(ThreadArgs*)*threads);
+	// 	for ( int i = 0; i < threads; i++ ) {
+	// 		worker_thread_args[i].tid = i;
+	// 		pthread_create(&worker_threads[i], NULL, worker_thread, &worker_thread_args[i]);
+	// 		cout<<"Thread "<<worker_thread_args[i].tid<<" spawned."<<endl;
+	// 	}
+	// 	pthread_mutex_init(&worker_status.mutex,NULL);
+	// 	pthread_cond_init(&worker_status.cond,NULL);
+	// 	pthread_barrier_init(&worker_status.barrier, NULL, threads);
+	// 	workerInitialized = true;
+	// }
+	// pthread_mutex_lock(&worker_status.mutex);
 	while (worker_status.numOfAwaitingJobs > 0) 
+	{
 		pthread_cond_wait(&worker_status.cond, &worker_status.mutex);
+		// cout<<"worker_status.numOfAwaitingJobs = "<<worker_status.numOfAwaitingJobs<<endl;
+	}
+	// cout<<"worker_status.numOfAwaitingJobs = "<<worker_status.numOfAwaitingJobs<<endl;
 	pthread_mutex_unlock(&worker_status.mutex);
 }
 
@@ -1580,10 +1625,37 @@ void trapezoid_blocking(float* temp, float* temp2, float* conduct, int w, int h,
 
 void step_optimized(float* temp, float* temp2, float* conduct, int w, int h, int threads, int substeps)
 {
-	// for (int j=1;j<9;j++)
-	// 	cout<<temp[idx(2021,j)]<<"\t";
-	// cout<<endl;
-	trapezoid_blocking(temp, temp2, conduct, w, h, threads, substeps);
+	// threads=1;
+	// substeps=16;
+	worker_width = w;
+	timeLayerSkip = w*h;
+	worker_status.stepsGoal = substeps;
+	// worker_width = w;
+	// for (int i=0;i<h;i++)
+	// {
+	// 	for (int j=0;j<w;j++)
+	// 	{
+	// 		if (temp[idx(i,j)] != 0)
+	// 			cout<<i<<","<<j<<"="<<temp[idx(i,j)]<<"\t";
+	// 	}
+	// }
+
+	// _aligned_free(temp2);
+	// temp2 = (float*)_aligned_malloc(sizeof(float)*w*h*substeps, 64);
+	// int ii=256-15;
+	// int jj=256-15;
+	trapezoid_blocking(temp, temp, conduct, w, h, threads, substeps);
+	// printMatrix(temp,ii,jj,30,30);
+
+	// int ii=256-15;
+	// int jj=256-15;
+	// cout<<"time = 0"<<endl;
+	// printMatrix(temp,ii,jj,30,30);
+	// for (int time=1; time<substeps;time++)
+	// {
+	// 	cout<<"time ="<<time<<endl;
+	// 	printMatrix(temp2+ w*h*(substeps-time),ii,jj,30,30);
+	// }
 
 	/*
 	//first approach: process horizontal lines and the transpose and then process horizontal lines again to avoid wasting reading any cache lines.

@@ -360,7 +360,6 @@ step_optimized(float* temp, float* temp2, float* conduct, int width, int height,
 		w.x = -1; w.y = -1; w.fence = true;
 		//g_status.lists[j]->push_back(w);
 		g_status.list.push_back(w);
-		
 	}
 	g_status.left += enqcount;
 

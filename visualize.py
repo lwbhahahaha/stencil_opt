@@ -46,7 +46,7 @@ for x in range (width):
 		if ( state[idx] < 0 ): state[idx] = 0;
 		#pixels[x,y] = (fs,fs,fs);
 		pixels[x/4,y/4] = heatmap(0,0.15,state[idx]);
-		if ( state[idx] == 500 ): print(str(y)+"\t"+str(x)+"\n");
+		# if ( state[idx] == 500 ): print(str(y)+"\t"+str(x)+"\n");
 
 
 #for idx in range (width*height):
